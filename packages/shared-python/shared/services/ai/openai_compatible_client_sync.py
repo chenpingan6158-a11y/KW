@@ -350,6 +350,7 @@ class OpenAICompatibleClientSync:
                 extra_body.setdefault("thinking", {"type": "disabled"})
 
         effective_model = model or self.default_model
+        max_tokens = _clamp_max_tokens_for_model(effective_model, max_tokens)
         if _should_mock_llm_calls():
             content = build_mock_chat_completion_response(
                 messages=all_messages,
@@ -465,6 +466,7 @@ class OpenAICompatibleClientSync:
                 extra_body.setdefault("thinking", {"type": "disabled"})
 
         effective_model = model or self.default_model
+        max_tokens = _clamp_max_tokens_for_model(effective_model, max_tokens)
         if _should_mock_llm_calls():
             return build_mock_chat_completion_response(
                 messages=all_messages,
@@ -591,6 +593,26 @@ def _strip_thinking_tags(text: str) -> str:
             body = body[start:end + 1]
         cleaned = body
     return cleaned
+
+
+_ZHIPU_FLASH_MAX_TOKENS = 1024
+
+
+def _clamp_max_tokens_for_model(model: str, max_tokens: int) -> int:
+    """Clamp max_tokens to provider caps that reject oversized budgets.
+
+    Zhipu free flash vision models (``glm-*-flash``) reject max_tokens > 1024
+    with error 1210 ("限制数值范围[1,1024]") while parser prompts default to
+    2000 (e.g. judge-image-type via build_prompt). The budget is an upper
+    bound, not a target, so clamping never truncates a would-be-shorter reply.
+    """
+    if (
+        "glm-" in model
+        and model.endswith("flash")
+        and max_tokens > _ZHIPU_FLASH_MAX_TOKENS
+    ):
+        return _ZHIPU_FLASH_MAX_TOKENS
+    return max_tokens
 
 
 def _parse_retry_after(exc: openai.RateLimitError) -> int:
