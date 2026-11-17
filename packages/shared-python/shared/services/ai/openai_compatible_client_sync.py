@@ -562,19 +562,26 @@ class OpenAICompatibleClientSync:
 
 _THINK_BLOCK_RE = re.compile(r"<think\b[^>]*>.*?</think\s*>", re.S | re.I)
 _ANSWER_WRAP_RE = re.compile(r"^\s*<answer\b[^>]*>(.*?)</answer\s*>\s*$", re.S | re.I)
+_BOX_MARKER_RE = re.compile(r"<\|begin_of_box\|>|<\|end_of_box\|>")
 
 
 def _strip_thinking_tags(text: str) -> str:
-    """Strip reasoning blocks emitted by thinking-mode vision models.
+    """Strip model-specific reasoning/packaging from completion content.
 
-    Some free models (e.g. Zhipu glm-4.1v-thinking-flash) ignore the
-    ``thinking: disabled`` flag and return
-    ``<think>...</think><answer>{json}</answer>``. Callers parse the content as
-    strict JSON, so unwrap it here.
+    Two wrappers seen from Zhipu glm-4.1v-thinking-flash (both ignore the
+    ``thinking: disabled`` flag and ``response_format=json_object``):
+
+    - reasoning blocks: ``<think>...</think><answer>{json}</answer>``
+    - answer-box markers: ``<|begin_of_box|>{json}<|end_of_box|>``
+
+    Callers parse the content as strict JSON, so unwrap here before returning.
     """
-    if not text or "<think" not in text.lower():
+    if not text:
         return text
-    cleaned = _THINK_BLOCK_RE.sub("", text).strip()
+    cleaned = _BOX_MARKER_RE.sub("", text).strip()
+    if "<think" not in cleaned.lower():
+        return cleaned
+    cleaned = _THINK_BLOCK_RE.sub("", cleaned).strip()
     wrapped = _ANSWER_WRAP_RE.match(cleaned)
     if wrapped:
         body = wrapped.group(1).strip()
