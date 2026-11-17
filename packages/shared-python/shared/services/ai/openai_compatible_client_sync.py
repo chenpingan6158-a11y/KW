@@ -7,6 +7,7 @@ For Aliyun (qwen) models, api keys are drawn from the AliQuotaManager
 token pool and automatically rotated on 429 RateLimitError.
 """
 import os
+import re
 import threading
 import time
 from typing import Any, Dict, List, Optional, Union
@@ -508,6 +509,7 @@ class OpenAICompatibleClientSync:
                 )
 
             content = choices[0].message.content or ""
+            content = _strip_thinking_tags(content)
             usage = _extract_usage(response)
             record_provider_usage(
                 usage,
@@ -556,6 +558,32 @@ class OpenAICompatibleClientSync:
             **kwargs,
         )
         return content
+
+
+_THINK_BLOCK_RE = re.compile(r"<think\b[^>]*>.*?</think\s*>", re.S | re.I)
+_ANSWER_WRAP_RE = re.compile(r"^\s*<answer\b[^>]*>(.*?)</answer\s*>\s*$", re.S | re.I)
+
+
+def _strip_thinking_tags(text: str) -> str:
+    """Strip reasoning blocks emitted by thinking-mode vision models.
+
+    Some free models (e.g. Zhipu glm-4.1v-thinking-flash) ignore the
+    ``thinking: disabled`` flag and return
+    ``<think>...</think><answer>{json}</answer>``. Callers parse the content as
+    strict JSON, so unwrap it here.
+    """
+    if not text or "<think" not in text.lower():
+        return text
+    cleaned = _THINK_BLOCK_RE.sub("", text).strip()
+    wrapped = _ANSWER_WRAP_RE.match(cleaned)
+    if wrapped:
+        body = wrapped.group(1).strip()
+        # The model sometimes writes a sentence before the JSON inside <answer>.
+        start, end = body.find("{"), body.rfind("}")
+        if start >= 0 and end > start:
+            body = body[start:end + 1]
+        cleaned = body
+    return cleaned
 
 
 def _parse_retry_after(exc: openai.RateLimitError) -> int:
