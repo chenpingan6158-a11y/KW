@@ -299,3 +299,51 @@ def test_image_parse_rejects_undecodable_source(tmp_path: Path) -> None:
         assert exc.details["reason"] == "IMAGE_DECODE_FAILED"
     else:
         raise AssertionError("expected ImageParsingException")
+
+
+def test_parse_image_formula_metadata(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    import app.services.document_parser.formats.image.parser as image_parser
+    from app.services.document_parser.formula import verifier as formula_verifier
+
+    source = tmp_path / "formula.png"
+    Image.new("RGB", (64, 64), color=(1, 2, 3)).save(source, format="PNG")
+
+    def fake_ask_image(*args: Any, **kwargs: Any) -> dict[str, str]:
+        del args, kwargs
+        return {"answer": "text"}
+
+    def fake_transcribe(**kwargs: Any) -> str:
+        del kwargs
+        return "The transform says $S_v(jf) = -j S_u(jf)$ for f>0."
+
+    monkeypatch.setattr(image_parser, "ask_image", fake_ask_image)
+    monkeypatch.setattr(image_parser, "transcribe", fake_transcribe)
+    monkeypatch.setattr(
+        image_parser,
+        "summarize",
+        lambda **kwargs: AssetSummary(title="asset title", summary="asset summary"),
+    )
+    monkeypatch.setattr(image_parser, "_get_vision_client", lambda: object())
+    # Hermetic test: skip the VLM render-back loop, keep extraction only.
+    monkeypatch.setattr(formula_verifier, "formula_verify_enabled", lambda: False)
+
+    parsed_df = image_parser.parse_image(
+        str(source),
+        filename="formula.png",
+        output_dir=str(tmp_path / "parser-output"),
+        base_llm_paras={"summary_image": True, "frag_desc": ""},
+        relative_root="formula.png",
+    )
+    chunks = dataframe_to_chunks(parsed_df)
+
+    assert len(chunks) == 1
+    chunk = chunks[0]
+    assert "$S_v(jf) = -j S_u(jf)$" in chunk["content"]
+    formulas = chunk["metadata"]["formulas"]
+    assert len(formulas) == 1
+    assert formulas[0]["latex"] == "S_v(jf) = -j S_u(jf)"
+    assert formulas[0]["status"] == "unverified"
+    assert formulas[0]["verified"] is False

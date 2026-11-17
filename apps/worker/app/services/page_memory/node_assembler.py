@@ -29,6 +29,7 @@ from typing import Any, cast
 
 from loguru import logger
 
+from app.services.document_parser.formula.models import FormulaRecord
 from app.services.document_parser.support.stage_profiler import stage_timer
 from app.services.document_parser.support.identifiers import gen_str_codes, get_str_time
 from app.services.document_parser.support.parser_rows import serialize_entities
@@ -462,6 +463,7 @@ def build_node_rows(
     node_assembly_concurrency: int = 3,
     body_text_by_page: dict[int, str] | None = None,
     toc_pages: list[int] | None = None,
+    formulas_by_page: dict[int, list[FormulaRecord]] | None = None,
 ) -> list[dict[str, Any]]:
     """Assemble one row per leaf section node (node-granularity chunks)."""
     available_pages = set(raw_text_by_page.keys())
@@ -552,6 +554,13 @@ def build_node_rows(
                 view=view, page_to_leaves=page_to_leaves,
                 body_text_by_page=body_text_by_page or {},
             )
+            node_formulas = [
+                record.to_metadata()
+                for page in view.pages
+                for record in (formulas_by_page or {}).get(page, [])
+            ]
+            if node_formulas:
+                row["extra_metadata"]["formulas"] = node_formulas
             rows.append(row)
             rows_by_path[leaf.section_path] = row
 

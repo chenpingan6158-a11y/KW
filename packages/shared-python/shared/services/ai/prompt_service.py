@@ -667,7 +667,7 @@ Output requirements:
             "You are transcribing a document page or image for a document memory "
             "system."
         )
-        prompt = f"""\
+        prompt = fr"""\
         {receive_line} Extract the body text as faithfully as possible.
 
         Return strict JSON with exactly this key:
@@ -679,6 +679,14 @@ Output requirements:
         - Preserve the ORIGINAL LANGUAGE of the text; do not translate.
         - Preserve the reading order (top-to-bottom, left-to-right).
         - Transcribe tables row by row using a simple readable layout.
+        - Transcribe mathematical notation (inline or display) as LaTeX: wrap
+        INLINE formulas in single dollar signs, e.g. $E = mc^2$; put DISPLAY
+        equations on their own line wrapped in double dollar signs, e.g.
+        $$\int_0^1 f(x)\,dx$$. Transcribe exactly what is visually written —
+        every operator, sign, index and exponent (\pm vs \mp, + vs -,
+        superscript vs subscript) — without simplifying, evaluating, or
+        translating variable names. Keep LaTeX in plain math mode; no
+        \begin{{align}} environments.
         - Do NOT add commentary, translation, or summary — transcription only.
         - Omit pure decorative running headers/footers and page numbers.
         - If there is no readable text, return {{"text": ""}}.
@@ -803,6 +811,42 @@ header_rows_to_skip: integer, the number of leading rows in Table B that duplica
             head_rows=head_rows,
             header_rows=header_rows,
         )
+
+    elif task == "formula-verify":
+        temperature = 0
+        top_p = 0.01
+        max_tokens = kwargs.get("paras", {}).get("max_tokens", 400)
+        latex = kwargs.get("paras", {}).get("latex", "")
+        prompt = r"""\
+You are a mathematical formula proofreader. You are given two images:
+
+- Image 1: the ORIGINAL crop of a formula from a document page.
+- Image 2: a RENDERING of the LaTeX string below.
+
+LaTeX string:
+{latex}
+
+Compare the rendered formula (Image 2) against the original (Image 1) for
+mathematical equivalence of what is visibly written: operators (+, -, \pm, \mp,
+\times, \cdot, \div, =, \neq, \leq, \geq, \approx, \sim), fractions,
+superscripts/subscripts, exponents, indices, roots, Greek letters, function
+names, bracket types, and the order of every term. Pay special attention to
+signs that differ only by a stroke (\pm vs \mp, + vs -) and to swapped or
+missing sub/superscripts.
+
+Ignore differences in font, size, spacing, alignment, and image quality.
+
+Return ONLY strict JSON, no markdown fences:
+{{"match": true/false, "corrected_latex": "<LaTeX string or null>", "reason": "<one sentence>"}}
+
+Rules:
+- "match": true only if Image 2 renders exactly what Image 1 shows, symbol for symbol.
+- If "match" is false, set "corrected_latex" to a corrected LaTeX string read
+  from Image 1 (keep Image 1's notation; do not simplify, rearrange, or
+  evaluate). If you cannot confidently read Image 1, set "corrected_latex" to null.
+- If "match" is true, "corrected_latex" must be null.
+"""
+        prompt = prompt.format(latex=latex)
 
     # ==================== Image Processing Prompts ====================
 

@@ -95,6 +95,46 @@ def test_zip_image_chunk_carries_the_same_connect_to_as_chunks() -> None:
     assert zip_image["metadata"]["connect_to"] == chunk_image["metadata"]["connect_to"]
 
 
+def test_zip_chunks_keep_valid_formulas_and_drop_malformed() -> None:
+    chunks = _chunks_with_two_embeds_of_one_image()
+    body = next(chunk for chunk in chunks if chunk["chunk_id"] == "body-1")
+    body["metadata"]["formulas"] = [
+        {"latex": "E=mc^2", "status": "verified", "verified": True, "page_num": 3},
+        {"latex": "", "status": "verified"},  # dropped: empty latex
+        {"latex": "x", "status": "bogus"},  # dropped: unknown status
+        "not-a-dict",  # dropped: not a dict
+    ]
+    image = next(chunk for chunk in chunks if chunk["chunk_id"] == "img-1")
+    image["metadata"]["formulas"] = [
+        {
+            "latex": "S_v(jf) = -jS_u(jf)",
+            "status": "corrected",
+            "verified": True,
+            "original_latex": "S_v(jf) = +jS_u(jf)",
+        },
+    ]
+
+    formatted = ZipChunkSchemaBuilder().format_chunks(
+        chunks,
+        image_files_map={"img-1": {"file_path": "images/a.jpg"}},
+        table_files_map={},
+    )
+
+    zip_body = next(chunk for chunk in formatted if chunk["chunk_id"] == "body-1")
+    assert zip_body["metadata"]["formulas"] == [
+        {"latex": "E=mc^2", "status": "verified", "verified": True, "page_num": 3}
+    ]
+    zip_image = next(chunk for chunk in formatted if chunk["type"] == "image")
+    assert zip_image["metadata"]["formulas"] == [
+        {
+            "latex": "S_v(jf) = -jS_u(jf)",
+            "status": "corrected",
+            "verified": True,
+            "original_latex": "S_v(jf) = +jS_u(jf)",
+        },
+    ]
+
+
 def test_iter_connected_target_ids_follows_only_forward_relations() -> None:
     row = {
         "chunk_metadata": {

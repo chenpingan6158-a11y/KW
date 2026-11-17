@@ -26,6 +26,15 @@ def test_page_memory_config_defaults_resolve_concurrency_settings() -> None:
     assert config.asset_model == ""
     assert config.fine_text_extractor == "none"
     assert config.fine_text_extraction_concurrency == 4
+    assert config.formula_verify_concurrency == 4
+
+
+def test_page_memory_config_from_mapping_accepts_formula_verify_concurrency() -> None:
+    config = PageMemoryConfig.from_mapping({"formula_verify_concurrency": 8})
+    assert config.formula_verify_concurrency == 8
+
+    junk_config = PageMemoryConfig.from_mapping({"formula_verify_concurrency": "junk"})
+    assert junk_config.formula_verify_concurrency == 4
 
 
 def test_page_memory_config_from_mapping_accepts_fine_text_extractor() -> None:

@@ -194,7 +194,7 @@ def _request_upload_target(pdf_url: str, filename: str) -> tuple[str, str, str]:
                 "is_ocr": True,
             }
         ],
-        "enable_formula": False,
+        "enable_formula": settings.MINERU_ENABLE_FORMULA,
         "enable_table": True,
         "language": "auto",
         "model_version": "pipeline",
@@ -366,7 +366,7 @@ def _submit_url_task(presigned_url: str, filename: str) -> tuple[str, str]:
     payload = {
         "files": [{"url": presigned_url}],
         "is_ocr": True,
-        "enable_formula": False,
+        "enable_formula": settings.MINERU_ENABLE_FORMULA,
         "enable_table": True,
         "language": "auto",
         "model_version": "pipeline",

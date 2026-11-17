@@ -130,6 +130,10 @@ class ZipChunkSchemaBuilder:
                 if isinstance(existing_metadata.get("body_text_preview"), str):
                     metadata["body_text_preview"] = existing_metadata["body_text_preview"]
 
+            formulas = _normalize_formulas(existing_metadata.get("formulas"))
+            if formulas:
+                metadata["formulas"] = formulas
+
             formatted_chunk = {
                 "chunk_id": chunk_id,
                 "type": chunk_type,
@@ -208,6 +212,39 @@ def _resolve_table_file_path(
 
     table_name = path.split("/")[-1] if "/" in path else f"table_{chunk_id}.html"
     return f"tables/{table_name}"
+
+
+def _normalize_formulas(value: Any) -> list[dict[str, Any]]:
+    """Validate ``metadata.formulas`` entries coming from the parse pipeline."""
+    valid_statuses = {
+        "unverified",
+        "verified",
+        "corrected",
+        "disputed",
+        "render_failed",
+        "judge_failed",
+    }
+    if not isinstance(value, list):
+        return []
+    formulas: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        latex = str(item.get("latex") or "").strip()
+        status = str(item.get("status") or "").strip()
+        if not latex or status not in valid_statuses:
+            continue
+        formula: dict[str, Any] = {
+            "latex": latex,
+            "status": status,
+            "verified": bool(item.get("verified")),
+        }
+        if (page_num := _positive_int_or_none(item.get("page_num"))) is not None:
+            formula["page_num"] = page_num
+        if (original := str(item.get("original_latex") or "").strip()):
+            formula["original_latex"] = original
+        formulas.append(formula)
+    return formulas
 
 
 def _normalize_page_assets(value: Any) -> list[dict[str, Any]]:

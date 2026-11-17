@@ -2,10 +2,12 @@
 import base64
 import hashlib
 import io
+import json
 import os
 import re
 from pathlib import Path
 
+from app.services.document_parser.formula.models import FormulaRecord
 from app.services.document_parser.tables.dataframe_helpers import process_dup_paths_df
 from app.services.document_parser.support.identifiers import gen_str_codes, get_str_time
 from app.services.document_parser.support.parser_rows import (
@@ -196,6 +198,49 @@ def detect_summary_img_md(line, last_context, image_root_dir):
     return imgs
 
 
+def _extract_and_verify_formulas(
+    transcribed: str,
+    *,
+    working_paths: list[str],
+    output_dir: str,
+) -> tuple[str, list[FormulaRecord]]:
+    """Pull ``$..$`` latex out of a transcription and render-back verify it.
+
+    Returns the (possibly corrected) transcription plus one record per
+    formula; records ride the chunk's ``extra_metadata`` downstream.
+    """
+    from app.services.document_parser.formula.extractor import (
+        extract_latex_formulas,
+        substitute_formulas,
+    )
+    from app.services.document_parser.formula.verifier import (
+        formula_verify_enabled,
+        verify_formulas,
+    )
+
+    extracted = extract_latex_formulas(transcribed)
+    if not extracted:
+        return transcribed, []
+    records = [FormulaRecord(latex=item.latex) for item in extracted]
+    source_image = working_paths[0] if working_paths else None
+    if source_image and formula_verify_enabled():
+        records = verify_formulas(
+            records,
+            image_for=lambda _record: source_image,
+            output_dir=os.path.join(output_dir, "_formula_verify"),
+            concurrency=1,
+            usage_task="parser.image.formula_verify",
+        )
+    corrected = [
+        (item, record.latex)
+        for item, record in zip(extracted, records, strict=True)
+        if record.status == "corrected" and record.latex != item.latex
+    ]
+    if corrected:
+        transcribed = substitute_formulas(transcribed, corrected)
+    return transcribed, records
+
+
 def parse_image(
     image_path,
     filename=None,
@@ -212,6 +257,7 @@ def parse_image(
     os.makedirs(img_dir, exist_ok=True)
 
     vlm_input = None
+    formula_records: list[FormulaRecord] = []
     try:
         # Store standalone image uploads under images/ so downstream packaging
         # can collect them with the same convention as document-extracted images.
@@ -257,7 +303,14 @@ def parse_image(
                 usage_task="parser.image.transcribe",
                 prompt_paras=sequence_paras,
             )
-            image_content = transcribed or filename
+            # Formula photos: keep $..$ latex and render-back verify it against
+            # the original image before it enters the chunk content.
+            image_content, formula_records = _extract_and_verify_formulas(
+                transcribed or "",
+                working_paths=working_paths,
+                output_dir=output_dir,
+            )
+            image_content = image_content or filename
             asset = summarize(
                 mode="asset",
                 image_paths=working_paths,
@@ -327,6 +380,14 @@ def parse_image(
     )
     img_ref = build_chunk_ref(relative_img_path)
     img_bottom_content = f"{img_ref}\nImage Content:\n{image_content}"
+    formula_metadata = (
+        json.dumps(
+            {"formulas": [record.to_metadata() for record in formula_records]},
+            ensure_ascii=False,
+        )
+        if formula_records
+        else ""
+    )
     rows_builder = ParsedRowsBuilder()
     rows_builder.append(
         ParsedRow(
@@ -336,6 +397,7 @@ def parse_image(
             summary=image_summary,
             know_id=temp_uid,
             addtime=time_stamp,
+            extra_metadata=formula_metadata,
         )
     )
 

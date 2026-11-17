@@ -325,3 +325,123 @@ def test_assemble_c7_prefers_fine_text_over_m0_bands(tmp_path: Path) -> None:
     assert page_rows
     assert "fine verbatim" in page_rows[0]["content"]
     assert "m0 band text" not in page_rows[0]["content"]
+
+
+def test_extract_fine_page_details_mineru_collects_formulas(
+    monkeypatch, tmp_path: Path
+) -> None:
+    extractor = _live_extractor()
+    from app.services.document_parser.formats.pdf import shard_splitter
+    from app.services.document_parser.formats.pdf.shard_splitter import LiveShard
+    from app.services.document_parser.providers.mineru import pdf_service
+
+    def fake_split_pdf(pdf_path, shards, work_dir, exclude_pages=None):
+        del pdf_path, shards, work_dir, exclude_pages
+        return [
+            LiveShard(
+                shard_index=0,
+                page_start=1,
+                page_end=1,
+                page_numbers=[1],
+                pdf_path=str(tmp_path / "shard_0.pdf"),
+            )
+        ]
+
+    def fake_parse_via_full(pdf_path, filename, output_dir, s3_key=None):
+        del pdf_path, filename, s3_key
+        layout = {
+            "pdf_info": [
+                {
+                    "page_idx": 0,
+                    "para_blocks": [
+                        {
+                            "lines": [
+                                {
+                                    "spans": [
+                                        {"type": "text", "content": "body before"},
+                                        {
+                                            "type": "inline_formula",
+                                            "latex": "E=mc^2",
+                                            "content": "E=mc^2",
+                                            "bbox": [100, 100, 160, 116],
+                                        },
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "interline_equation",
+                            "latex": "\\int_0^1 f(x)\\,dx",
+                            "bbox": [72, 200, 300, 240],
+                        },
+                    ],
+                }
+            ]
+        }
+        Path(output_dir, "layout.json").write_text(
+            json.dumps(layout),
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr(shard_splitter, "split_pdf", fake_split_pdf)
+    monkeypatch.setattr(pdf_service, "parse_via_full", fake_parse_via_full)
+
+    details = extractor.extract_fine_page_details(
+        pdf_path=str(tmp_path / "doc.pdf"),
+        rendered=[
+            SimpleNamespace(
+                page_index=1,
+                image_path=str(tmp_path / "p1.png"),
+                width=612.0,
+                height=792.0,
+            )
+        ],
+        final_pages=[1],
+        extractor="mineru",
+        vlm_model=None,
+        output_dir=str(tmp_path / "fine"),
+        concurrency=1,
+    )
+
+    text = details.text_by_page[1]
+    assert "body before $E=mc^2$" in text
+    assert text.splitlines()[1] == "$$\\int_0^1 f(x)\\,dx$$"
+
+    formulas = details.formulas_by_page[1]
+    assert len(formulas) == 2
+    assert formulas[0].latex == "E=mc^2"
+    assert formulas[0].page_num == 1
+    assert formulas[0].bbox_px == [200, 200, 320, 232]
+    assert formulas[1].latex == "\\int_0^1 f(x)\\,dx"
+    assert formulas[1].bbox_px == [144, 400, 600, 480]
+    assert not (tmp_path / "fine").exists()
+
+
+def test_extract_fine_page_details_vlm_extracts_dollar_latex(
+    monkeypatch, tmp_path: Path
+) -> None:
+    extractor = _live_extractor()
+    image_path = tmp_path / "page-1.png"
+    image_path.write_bytes(b"png")
+    transcribed = "The energy is $E=mc^2$ and\n$$a^2+b^2=c^2$$\nend"
+
+    def fake_transcribe(*, image_paths, model, usage_task):
+        del image_paths, model, usage_task
+        return transcribed
+
+    monkeypatch.setattr(extractor, "transcribe", fake_transcribe)
+
+    details = extractor.extract_fine_page_details(
+        pdf_path=str(tmp_path / "doc.pdf"),
+        rendered=[SimpleNamespace(page_index=1, image_path=str(image_path))],
+        final_pages=[1],
+        extractor="vlm",
+        vlm_model="vision",
+        output_dir=str(tmp_path / "out"),
+        concurrency=1,
+    )
+
+    assert details.text_by_page == {1: transcribed}
+    formulas = details.formulas_by_page[1]
+    assert [item.latex for item in formulas] == ["E=mc^2", "a^2+b^2=c^2"]
+    assert all(item.page_num == 1 for item in formulas)

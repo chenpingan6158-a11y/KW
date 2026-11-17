@@ -68,6 +68,7 @@ class _ScopeRunResult:
     rendered: list[Any]
     final_pages: list[int]
     fine_text_by_page: dict[int, str] = field(default_factory=dict)
+    formulas_by_page: dict[int, list[Any]] = field(default_factory=dict)
 
 
 def run(request: PageMemoryInput) -> tuple[str, pd.DataFrame]:
@@ -345,6 +346,7 @@ def assemble_c7_node_rows(
     vlm_model: str | None,
     page_memory_config: PageMemoryConfig,
     fine_text_by_page: dict[int, str] | None = None,
+    formulas_by_page: dict[int, list[Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[int]]:
     """Shared C7 node-row assembly used by whole-doc ``_build_page_dataframe`` and per-scope refinement."""
     from app.services.document_agent.structure.toc_anchoring import pages_excluding_toc
@@ -403,6 +405,7 @@ def assemble_c7_node_rows(
         node_assembly_concurrency=page_memory_config.node_assembly_concurrency,
         body_text_by_page=body_text_by_page,
         toc_pages=toc_pages,
+        formulas_by_page=formulas_by_page,
     )
     return rows, final_pages
 
@@ -522,11 +525,14 @@ def _build_page_dataframe(
     )
     rendered_map: dict[int, Any] = {}
     fine_text_by_page: dict[int, str] = {}
+    formulas_by_page: dict[int, list[Any]] = {}
     for result in scope_results:
         for rendered_page in result.rendered:
             rendered_map.setdefault(rendered_page.page_index, rendered_page)
         for page, text in result.fine_text_by_page.items():
             fine_text_by_page.setdefault(int(page), text)
+        for page, items in result.formulas_by_page.items():
+            formulas_by_page.setdefault(int(page), []).extend(items)
 
     _write_top_level_artifacts(
         output_dir=output_dir,
@@ -553,6 +559,7 @@ def _build_page_dataframe(
             vlm_model=vlm_model,
             page_memory_config=page_memory_config,
             fine_text_by_page=fine_text_by_page,
+            formulas_by_page=formulas_by_page,
         )
     logger.info(
         "[page_memory] C7 assembled {} node rows (verdict={})",
@@ -790,10 +797,12 @@ def _run_hierarchy_scope(
             page_features=page_features,
             page_texts=page_texts,
         )
-    from app.services.page_memory.page_text_extractor import extract_fine_page_text
+    from app.services.page_memory.page_text_extractor import (
+        extract_fine_page_details,
+    )
 
     with stage_timer("page_memory.fine_text", page_count=len(final_pages)):
-        fine_text_by_page = extract_fine_page_text(
+        fine_result = extract_fine_page_details(
             pdf_path=pdf_path,
             rendered=rendered,
             final_pages=final_pages,
@@ -802,6 +811,19 @@ def _run_hierarchy_scope(
             output_dir=os.path.join(output_dir, "_fine_text", scope.scope_id),
             concurrency=page_memory_config.fine_text_extraction_concurrency,
         )
+    fine_text_by_page = fine_result.text_by_page
+    formulas_by_page = _verify_scope_formulas(
+        fine_result.formulas_by_page,
+        rendered=rendered,
+        output_dir=output_dir,
+        scope_id=scope.scope_id,
+        vlm_model=vlm_model,
+        concurrency=page_memory_config.formula_verify_concurrency,
+    )
+    fine_text_by_page = _apply_formula_corrections(
+        fine_text_by_page,
+        formulas_by_page,
+    )
     _record_trace_stage(
         trace_recorder,
         "C1.render_pages",
@@ -896,10 +918,91 @@ def _run_hierarchy_scope(
         rendered=rendered,
         final_pages=final_pages,
         fine_text_by_page=fine_text_by_page,
+        formulas_by_page=formulas_by_page,
     )
 
 
 # ── helpers ───────────────────────────────────────────────────────────
+
+
+def _verify_scope_formulas(
+    formulas_by_page: dict[int, list[Any]],
+    *,
+    rendered: list[Any],
+    output_dir: str,
+    scope_id: str,
+    vlm_model: str | None,
+    concurrency: int,
+) -> dict[int, list[Any]]:
+    """Render-back verify extracted formulas when the master switch is on.
+
+    Mutates the records in place (status/latex corrections) and returns the
+    same mapping so callers can thread it into ``_ScopeRunResult``.
+    """
+    from app.services.document_parser.formula.verifier import (
+        crop_bbox,
+        formula_verify_enabled,
+        verify_formulas,
+    )
+
+    records = [record for items in formulas_by_page.values() for record in items]
+    if not records or not formula_verify_enabled():
+        return formulas_by_page
+
+    render_map = {
+        int(item.page_index): item
+        for item in rendered
+        if getattr(item, "page_index", None) is not None
+    }
+    index_by_record = {id(record): index for index, record in enumerate(records)}
+
+    def _image_for(record: Any) -> str | None:
+        rend = render_map.get(record.page_num)
+        page_image = str(getattr(rend, "image_path", "") or "") if rend else ""
+        if not page_image or not os.path.exists(page_image):
+            return None
+        if record.bbox_px:
+            crop_path = os.path.join(
+                output_dir,
+                "_formula_verify",
+                scope_id,
+                f"crop-{index_by_record.get(id(record), 0)}.png",
+            )
+            return crop_bbox(page_image, record.bbox_px, crop_path) or page_image
+        return page_image
+
+    with stage_timer("page_memory.formula_verify", formula_count=len(records)):
+        verify_formulas(
+            records,
+            image_for=_image_for,
+            output_dir=os.path.join(output_dir, "_formula_verify", scope_id),
+            model_name=vlm_model,
+            concurrency=concurrency,
+            usage_task="page_memory.formula_verify",
+        )
+    return formulas_by_page
+
+
+def _apply_formula_corrections(
+    fine_text_by_page: dict[int, str],
+    formulas_by_page: dict[int, list[Any]],
+) -> dict[int, str]:
+    """Splice judge-corrected latex back into the fine page text."""
+    for page, records in formulas_by_page.items():
+        text = fine_text_by_page.get(page)
+        if not text:
+            continue
+        for record in records:
+            if record.status != "corrected" or not record.original_latex:
+                continue
+            display_old = f"$${record.original_latex}$$"
+            inline_old = f"${record.original_latex}$"
+            if display_old in text:
+                text = text.replace(display_old, f"$${record.latex}$$", 1)
+            elif inline_old in text:
+                text = text.replace(inline_old, f"${record.latex}$", 1)
+        fine_text_by_page[page] = text
+    return fine_text_by_page
 
 
 def _select_rendered_pages_with_assets(

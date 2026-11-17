@@ -29,6 +29,7 @@ dependencies = [
     "httpcore>=1.0.6",
     "tabula-py>=2.10.0",
     "rapidocr-onnxruntime>=1.4.4",
+    "matplotlib>=3.9",
 ]
 
 # Production retrieval runs in apps/api, where cursor-sdk is a base

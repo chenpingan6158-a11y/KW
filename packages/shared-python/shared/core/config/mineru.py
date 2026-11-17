@@ -68,3 +68,10 @@ class MineruConfig(BaseModel):
         default=3600,
         description="Presigned URL TTL in seconds for S3 URL mode ingestion.",
     )
+    MINERU_ENABLE_FORMULA: bool = Field(
+        default=True,
+        description=(
+            "Ask MinerU to emit LaTeX formulas (inline_formula spans and "
+            "interline_equation blocks in layout.json)."
+        ),
+    )

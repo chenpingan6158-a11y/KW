@@ -131,6 +131,17 @@ class AIConfig(BaseModel):
         default=4,
         description="Local per-job concurrency for fine-stage VLM page transcription.",
     )
+    FORMULA_VERIFY_ENABLED: bool = Field(
+        default=True,
+        description=(
+            "Master switch for render-back VLM verification of extracted math "
+            "formulas (page-memory fine stage and image parser)."
+        ),
+    )
+    PAGE_MEMORY_FORMULA_VERIFY_CONCURRENCY: int = Field(
+        default=4,
+        description="Gevent pool size for page-memory formula verification.",
+    )
     TOKEN_PRICING_TABLE_JSON: str = Field(
         default="",
         description=(

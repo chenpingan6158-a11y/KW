@@ -40,6 +40,7 @@ class PageMemoryConfig:
     scan_direction: str = "top_to_bottom_left_to_right"
     fine_text_extractor: str = "none"
     fine_text_extraction_concurrency: int = 4
+    formula_verify_concurrency: int = 4
 
     @classmethod
     def default(cls) -> Self:
@@ -72,6 +73,10 @@ class PageMemoryConfig:
                     "PAGE_MEMORY_FINE_TEXT_EXTRACTION_CONCURRENCY",
                     4,
                 ),
+                4,
+            ),
+            formula_verify_concurrency=_as_int(
+                getattr(settings, "PAGE_MEMORY_FORMULA_VERIFY_CONCURRENCY", 4),
                 4,
             ),
         )
@@ -149,6 +154,10 @@ class PageMemoryConfig:
             fine_text_extraction_concurrency=_as_int(
                 value.get("fine_text_extraction_concurrency"),
                 default.fine_text_extraction_concurrency,
+            ),
+            formula_verify_concurrency=_as_int(
+                value.get("formula_verify_concurrency"),
+                default.formula_verify_concurrency,
             ),
         )
 
