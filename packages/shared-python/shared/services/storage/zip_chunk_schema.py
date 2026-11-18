@@ -133,6 +133,11 @@ class ZipChunkSchemaBuilder:
             formulas = _normalize_formulas(existing_metadata.get("formulas"))
             if formulas:
                 metadata["formulas"] = formulas
+            formula_scan = _normalize_formula_scan(
+                existing_metadata.get("formula_scan")
+            )
+            if formula_scan is not None:
+                metadata["formula_scan"] = formula_scan
 
             formatted_chunk = {
                 "chunk_id": chunk_id,
@@ -245,6 +250,24 @@ def _normalize_formulas(value: Any) -> list[dict[str, Any]]:
             formula["original_latex"] = original
         formulas.append(formula)
     return formulas
+
+
+def _normalize_formula_scan(value: Any) -> dict[str, Any] | None:
+    """Validate the ``metadata.formula_scan`` extraction trace.
+
+    A zero-found scan is still emitted: it distinguishes "the formula path
+    ran and found nothing" from "the formula path never ran".
+    """
+    if not isinstance(value, dict):
+        return None
+    found = value.get("found")
+    if not isinstance(found, int) or isinstance(found, bool) or found < 0:
+        return None
+    scan: dict[str, Any] = {"found": found}
+    for key in ("redelimited", "redelimit_failed"):
+        if isinstance(value.get(key), bool):
+            scan[key] = value[key]
+    return scan
 
 
 def _normalize_page_assets(value: Any) -> list[dict[str, Any]]:

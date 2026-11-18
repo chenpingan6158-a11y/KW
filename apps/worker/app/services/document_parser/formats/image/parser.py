@@ -203,15 +203,23 @@ def _extract_and_verify_formulas(
     *,
     working_paths: list[str],
     output_dir: str,
-) -> tuple[str, list[FormulaRecord]]:
+) -> tuple[str, list[FormulaRecord], dict]:
     """Pull ``$..$`` latex out of a transcription and render-back verify it.
 
-    Returns the (possibly corrected) transcription plus one record per
-    formula; records ride the chunk's ``extra_metadata`` downstream.
+    Returns the (possibly corrected) transcription, one record per formula,
+    and a ``formula_scan`` trace (``{"found": n, ...}``) so a zero-formula
+    outcome stays distinguishable from "the pipeline never ran". When the
+    transcription carries math but no ``$`` delimiters, one LLM rewrite
+    redelinates it before giving up. Records ride the chunk's
+    ``extra_metadata`` downstream.
     """
     from app.services.document_parser.formula.extractor import (
         extract_latex_formulas,
         substitute_formulas,
+    )
+    from app.services.document_parser.formula.redelimit import (
+        looks_mathematical,
+        redelimit_transcription,
     )
     from app.services.document_parser.formula.verifier import (
         formula_verify_enabled,
@@ -219,8 +227,24 @@ def _extract_and_verify_formulas(
     )
 
     extracted = extract_latex_formulas(transcribed)
+    scan: dict = {"found": len(extracted)}
+    if not extracted and looks_mathematical(transcribed):
+        # The VLM flattened the math despite the delimiter instruction; one
+        # cheap text rewrite restores $..$ so the verify loop still runs.
+        rewritten = redelimit_transcription(
+            transcribed,
+            usage_task="parser.image.formula_redelimit",
+        )
+        if rewritten is None:
+            scan["redelimit_failed"] = True
+        else:
+            extracted = extract_latex_formulas(rewritten)
+            scan["found"] = len(extracted)
+            if extracted:
+                transcribed = rewritten
+                scan["redelimited"] = True
     if not extracted:
-        return transcribed, []
+        return transcribed, [], scan
     records = [FormulaRecord(latex=item.latex) for item in extracted]
     source_image = working_paths[0] if working_paths else None
     if source_image and formula_verify_enabled():
@@ -238,7 +262,7 @@ def _extract_and_verify_formulas(
     ]
     if corrected:
         transcribed = substitute_formulas(transcribed, corrected)
-    return transcribed, records
+    return transcribed, records, scan
 
 
 def parse_image(
@@ -258,6 +282,7 @@ def parse_image(
 
     vlm_input = None
     formula_records: list[FormulaRecord] = []
+    formula_scan: dict = {}
     try:
         # Store standalone image uploads under images/ so downstream packaging
         # can collect them with the same convention as document-extracted images.
@@ -305,7 +330,7 @@ def parse_image(
             )
             # Formula photos: keep $..$ latex and render-back verify it against
             # the original image before it enters the chunk content.
-            image_content, formula_records = _extract_and_verify_formulas(
+            image_content, formula_records, formula_scan = _extract_and_verify_formulas(
                 transcribed or "",
                 working_paths=working_paths,
                 output_dir=output_dir,
@@ -380,13 +405,15 @@ def parse_image(
     )
     img_ref = build_chunk_ref(relative_img_path)
     img_bottom_content = f"{img_ref}\nImage Content:\n{image_content}"
+    formula_extra: dict = {}
+    if formula_records:
+        formula_extra["formulas"] = [
+            record.to_metadata() for record in formula_records
+        ]
+    if formula_scan:
+        formula_extra["formula_scan"] = formula_scan
     formula_metadata = (
-        json.dumps(
-            {"formulas": [record.to_metadata() for record in formula_records]},
-            ensure_ascii=False,
-        )
-        if formula_records
-        else ""
+        json.dumps(formula_extra, ensure_ascii=False) if formula_extra else ""
     )
     rows_builder = ParsedRowsBuilder()
     rows_builder.append(

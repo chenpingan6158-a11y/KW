@@ -135,6 +135,45 @@ def test_zip_chunks_keep_valid_formulas_and_drop_malformed() -> None:
     ]
 
 
+def test_zip_chunks_keep_formula_scan_trace_and_drop_malformed() -> None:
+    chunks = _chunks_with_two_embeds_of_one_image()
+    body = next(chunk for chunk in chunks if chunk["chunk_id"] == "body-1")
+    body["metadata"]["formula_scan"] = {"found": 0, "redelimited": False}
+    image = next(chunk for chunk in chunks if chunk["chunk_id"] == "img-1")
+    image["metadata"]["formula_scan"] = {
+        "found": 2,
+        "redelimited": True,
+        "unknown_key": True,  # dropped: not a recognized trace key
+    }
+
+    formatted = ZipChunkSchemaBuilder().format_chunks(
+        chunks,
+        image_files_map={"img-1": {"file_path": "images/a.jpg"}},
+        table_files_map={},
+    )
+
+    zip_body = next(chunk for chunk in formatted if chunk["chunk_id"] == "body-1")
+    assert zip_body["metadata"]["formula_scan"] == {"found": 0, "redelimited": False}
+    zip_image = next(chunk for chunk in formatted if chunk["type"] == "image")
+    assert zip_image["metadata"]["formula_scan"] == {"found": 2, "redelimited": True}
+
+
+def test_zip_chunks_drop_malformed_formula_scan() -> None:
+    for bad in ("many", -1, None, {"found": True}, ["found"]):
+        chunks = _chunks_with_two_embeds_of_one_image()
+        body = next(chunk for chunk in chunks if chunk["chunk_id"] == "body-1")
+        body["metadata"]["formula_scan"] = bad  # type: ignore[assignment]
+
+        formatted = ZipChunkSchemaBuilder().format_chunks(
+            chunks,
+            image_files_map={"img-1": {"file_path": "images/a.jpg"}},
+            table_files_map={},
+        )
+
+        zip_body = next(chunk for chunk in formatted if chunk["chunk_id"] == "body-1")
+        assert "formula_scan" not in zip_body["metadata"], bad
+
+
 def test_iter_connected_target_ids_follows_only_forward_relations() -> None:
     row = {
         "chunk_metadata": {

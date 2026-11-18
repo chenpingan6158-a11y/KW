@@ -6,6 +6,10 @@ from app.services.document_parser.formula.extractor import (
     substitute_formulas,
 )
 from app.services.document_parser.formula.models import FORMULA_STATUSES, FormulaRecord
+from app.services.document_parser.formula.redelimit import (
+    looks_mathematical,
+    redelimit_transcription,
+)
 from app.services.document_parser.formula.verifier import (
     crop_bbox,
     formula_verify_enabled,
@@ -19,6 +23,8 @@ __all__ = [
     "crop_bbox",
     "extract_latex_formulas",
     "formula_verify_enabled",
+    "looks_mathematical",
+    "redelimit_transcription",
     "substitute_formulas",
     "verify_formulas",
 ]

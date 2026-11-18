@@ -848,6 +848,33 @@ Rules:
 """
         prompt = prompt.format(latex=latex)
 
+    elif task == "formula-redelimit":
+        temperature = 0.1
+        prompt = r"""\
+You are a transcription repair tool. You will receive a raw transcription of
+a text image that contains mathematical formulas. The transcription flattened
+the formulas into plain text and lost the $ delimiters.
+
+Rewrite the transcription under these rules:
+- Keep every word of the surrounding prose exactly as it is, in the same
+  language and the same order. Do not summarize, translate, or drop anything.
+- Convert each formula into LaTeX and wrap it: inline math in $...$,
+  standalone display math on its own lines in $$...$$.
+- Symbol fidelity is absolute: copy every sign, subscript, superscript, and
+  value exactly as transcribed. Use \frac, \sqrt, \dot, \omega, \varphi, \pi
+  and similar commands where the text implies them (e.g. "ω₀" → \omega_0,
+  "x^(1/2)" → x^{1/2}, "dot U(t)" → \dot{U}(t)).
+- Do NOT add explanations, comments, markdown fences, or new content.
+
+Return ONLY the rewritten transcription.
+
+Raw transcription:
+```
+{texts}
+```
+"""
+        prompt = prompt.format(texts=texts)
+
     # ==================== Image Processing Prompts ====================
 
     elif task == "summary-images":

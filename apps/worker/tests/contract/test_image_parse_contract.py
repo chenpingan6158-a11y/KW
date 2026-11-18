@@ -347,3 +347,112 @@ def test_parse_image_formula_metadata(
     assert formulas[0]["latex"] == "S_v(jf) = -j S_u(jf)"
     assert formulas[0]["status"] == "unverified"
     assert formulas[0]["verified"] is False
+
+
+def test_parse_image_redelimit_fallback_recovers_formulas(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Zero-$ math transcription triggers one rewrite, then the normal path."""
+    import app.services.document_parser.formats.image.parser as image_parser
+    from app.services.document_parser.formula import verifier as formula_verifier
+
+    source = tmp_path / "flat.png"
+    Image.new("RGB", (64, 64), color=(1, 2, 3)).save(source, format="PNG")
+
+    flat_transcription = (
+        "The model reads\nA(t) = [U(t)^2 + V(t)^2]^(1/2)\nwith ω(t) = dΦ(t)/dt"
+    )
+    redelimited = (
+        "The model reads\n$$A(t) = [U(t)^2 + V(t)^2]^{1/2}$$\n"
+        "with $\\omega(t) = d\\Phi(t)/dt$"
+    )
+
+    rewrite_calls: list[str] = []
+
+    def fake_redelimit(text: str, **kwargs: Any) -> str:
+        del kwargs
+        rewrite_calls.append(text)
+        return redelimited
+
+    monkeypatch.setattr(
+        image_parser, "ask_image", lambda *a, **k: {"answer": "text"}
+    )
+    monkeypatch.setattr(image_parser, "transcribe", lambda **k: flat_transcription)
+    monkeypatch.setattr(
+        image_parser,
+        "summarize",
+        lambda **kwargs: AssetSummary(title="asset title", summary="asset summary"),
+    )
+    monkeypatch.setattr(image_parser, "_get_vision_client", lambda: object())
+    monkeypatch.setattr(formula_verifier, "formula_verify_enabled", lambda: False)
+
+    import app.services.document_parser.formula.redelimit as redelimit_mod
+
+    monkeypatch.setattr(redelimit_mod, "redelimit_transcription", fake_redelimit)
+
+    parsed_df = image_parser.parse_image(
+        str(source),
+        filename="flat.png",
+        output_dir=str(tmp_path / "parser-output"),
+        base_llm_paras={"summary_image": True, "frag_desc": ""},
+        relative_root="flat.png",
+    )
+    chunks = dataframe_to_chunks(parsed_df)
+
+    assert rewrite_calls == [flat_transcription]
+    chunk = chunks[0]
+    # The redelimited transcription replaces the flat one in the content.
+    assert "$$A(t) = [U(t)^2 + V(t)^2]^{1/2}$$" in chunk["content"]
+    formulas = chunk["metadata"]["formulas"]
+    assert len(formulas) == 2
+    assert formulas[0]["latex"] == "A(t) = [U(t)^2 + V(t)^2]^{1/2}"
+    assert chunk["metadata"]["formula_scan"] == {"found": 2, "redelimited": True}
+
+
+def test_parse_image_formula_scan_marks_zero_found_without_rewrite(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Plain prose: no rewrite call, but formula_scan still records the miss."""
+    import app.services.document_parser.formats.image.parser as image_parser
+    from app.services.document_parser.formula import verifier as formula_verifier
+
+    source = tmp_path / "prose.png"
+    Image.new("RGB", (64, 64), color=(1, 2, 3)).save(source, format="PNG")
+
+    def fail_redelimit(text: str, **kwargs: Any) -> str:
+        raise AssertionError("redelimit must not run for plain prose")
+
+    monkeypatch.setattr(
+        image_parser, "ask_image", lambda *a, **k: {"answer": "text"}
+    )
+    monkeypatch.setattr(
+        image_parser,
+        "transcribe",
+        lambda **k: "今天天气很好,我们去公园散步,顺便聊了聊最近的工作。",
+    )
+    monkeypatch.setattr(
+        image_parser,
+        "summarize",
+        lambda **kwargs: AssetSummary(title="asset title", summary="asset summary"),
+    )
+    monkeypatch.setattr(image_parser, "_get_vision_client", lambda: object())
+    monkeypatch.setattr(formula_verifier, "formula_verify_enabled", lambda: False)
+
+    import app.services.document_parser.formula.redelimit as redelimit_mod
+
+    monkeypatch.setattr(redelimit_mod, "redelimit_transcription", fail_redelimit)
+
+    parsed_df = image_parser.parse_image(
+        str(source),
+        filename="prose.png",
+        output_dir=str(tmp_path / "parser-output"),
+        base_llm_paras={"summary_image": True, "frag_desc": ""},
+        relative_root="prose.png",
+    )
+    chunks = dataframe_to_chunks(parsed_df)
+
+    chunk = chunks[0]
+    assert "formulas" not in chunk["metadata"]
+    assert chunk["metadata"]["formula_scan"] == {"found": 0}
