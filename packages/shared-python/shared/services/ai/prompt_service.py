@@ -863,7 +863,7 @@ Rewrite the transcription under these rules:
 - Symbol fidelity is absolute: copy every sign, subscript, superscript, and
   value exactly as transcribed. Use \frac, \sqrt, \dot, \omega, \varphi, \pi
   and similar commands where the text implies them (e.g. "ω₀" → \omega_0,
-  "x^(1/2)" → x^{1/2}, "dot U(t)" → \dot{U}(t)).
+  "x^(1/2)" → x^{{1/2}}, "dot U(t)" → \dot{{U}}(t)).
 - Do NOT add explanations, comments, markdown fences, or new content.
 
 Return ONLY the rewritten transcription.

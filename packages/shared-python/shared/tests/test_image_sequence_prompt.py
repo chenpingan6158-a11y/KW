@@ -59,3 +59,18 @@ def test_judge_and_transcribe_prompts_describe_sequence() -> None:
     assert "multi-page TIFF" in judge
     assert "6 frames" in transcribe
     assert "animated WebP" in transcribe
+
+
+def test_formula_redelimit_prompt_builds_with_braced_latex_examples() -> None:
+    """The prompt embeds literal {1/2} / {U} braces; .format must survive."""
+    prompt, temperature, _top_p, max_tokens = build_prompt(
+        "formula-redelimit",
+        "A(t) = [U(t)^2 + V(t)^2]^(1/2)",
+        "",
+    )
+    assert "formula-redelimit" not in prompt
+    assert "A(t) = [U(t)^2 + V(t)^2]^(1/2)" in prompt
+    assert "x^{1/2}" in prompt
+    assert "\dot{U}(t)" in prompt
+    assert temperature == 0.1
+    assert max_tokens == 2000
