@@ -7,6 +7,9 @@ import re
 _TEXT_CMD_RE = re.compile(r"\\text\s*\{")
 # Commands mathtext cannot parse and that carry no visual meaning here.
 _STRIP_CMDS_RE = re.compile(r"\\(?:displaystyle|label|tag)\s*(?:\{[^{}]*\})?")
+# mathtext separates rows by newlines inside cases/array environments, while
+# LLM output uses the standard LaTeX ``\\`` row separator.
+_ROW_SEP_RE = re.compile(r"\\\\\s*")
 
 
 def render_formula_png(latex: str, output_path: str, *, dpi: int = 200) -> str:
@@ -50,4 +53,5 @@ def _sanitize(latex: str) -> str:
     expression = latex.strip().strip("$").strip()
     expression = _TEXT_CMD_RE.sub(r"\\mathrm{", expression)
     expression = _STRIP_CMDS_RE.sub("", expression)
+    expression = _ROW_SEP_RE.sub("\n", expression)
     return expression

@@ -27,3 +27,14 @@ def test_render_unsupported_latex_raises(tmp_path: Path) -> None:
             r"\begin{align} x &= 1 \end{align}",
             str(tmp_path / "align.png"),
         )
+
+
+def test_row_separator_backslashes_render_like_newlines(tmp_path):
+    """LLM ``\\`` row separators must render the same as newline rows."""
+    from app.services.document_parser.formula.renderer import render_formula_png
+
+    latex = (
+        "S_v(jf)=\\begin{cases}-jS_u(jf), & f>0\\\\ jS_u(jf), & f<0\\end{cases}"
+    )
+    out = render_formula_png(latex, str(tmp_path / "cases.png"))
+    assert (tmp_path / "cases.png").exists() and out
