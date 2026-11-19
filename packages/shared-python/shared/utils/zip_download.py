@@ -4,6 +4,7 @@ import os
 import zipfile
 from pathlib import Path
 from collections.abc import Mapping
+from typing import Any
 
 import requests
 
@@ -19,8 +20,15 @@ def download_and_extract_zip(
     keep_exts: tuple[str, ...] = (".md", ".json"),
     exclude_patterns: tuple[str, ...] = (),
     clean_empty_dirs: bool = True,
+    impersonate: str | None = None,
 ) -> None:
-    """Download a ZIP file, extract it, and keep only the requested artifacts."""
+    """Download a ZIP file, extract it, and keep only the requested artifacts.
+
+    ``impersonate`` routes the download through curl_cffi with a browser TLS
+    fingerprint (e.g. ``"chrome"``). Some CDN edges reset OpenSSL ClientHellos
+    while accepting browser ones (observed 2026-11-19 on
+    cdn-mineru.openxlab.org.cn); MinerU result downloads pass ``"chrome"``.
+    """
     import fnmatch
 
     from shared.core.constants import APIConstants, ProcessingConstants
@@ -34,18 +42,35 @@ def download_and_extract_zip(
     destination.mkdir(parents=True, exist_ok=True)
     zip_path = destination / filename
 
-    with requests.get(
-        url,
-        headers=headers or {},
-        timeout=timeout,
-        stream=True,
-        allow_redirects=True,
-    ) as response:
+    response: Any
+    if impersonate:
+        from curl_cffi import requests as curl_requests
+
+        response = curl_requests.get(
+            url,
+            headers=dict(headers or {}),
+            timeout=timeout,
+            allow_redirects=True,
+            impersonate=impersonate,
+            stream=True,
+        )
+    else:
+        response = requests.get(
+            url,
+            headers=headers or {},
+            timeout=timeout,
+            stream=True,
+            allow_redirects=True,
+        )
+
+    try:
         response.raise_for_status()
         with open(zip_path, "wb") as zip_file:
             for chunk in response.iter_content(chunk_size=chunk_size):
                 if chunk:
                     zip_file.write(chunk)
+    finally:
+        response.close()
 
     with zipfile.ZipFile(zip_path, "r") as extracted_zip:
         extracted_zip.extractall(destination)

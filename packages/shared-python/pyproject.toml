@@ -20,6 +20,9 @@ dependencies = [
     # Redis
     "redis==5.3.1",
 
+    # Browser-TLS-fingerprint downloads (curl-impersonate wrapper)
+    "curl_cffi>=0.13",
+
     # Celery task queue
     "celery==5.5.3",
     "kombu==5.5.4",

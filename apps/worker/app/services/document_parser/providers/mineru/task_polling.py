@@ -150,6 +150,9 @@ def poll_mineru_task(
                         dest_dir=output_dir,
                         keep_exts=(".json",),
                         exclude_patterns=("content_list", "middle.json", "model.json"),
+                        # The result CDN resets OpenSSL ClientHellos while
+                        # accepting browser fingerprints (2026-11-19).
+                        impersonate="chrome",
                     )
                     polling_logger.bind(token_id=lease.token_id).info(
                         "MinerU parsing completed"
