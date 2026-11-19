@@ -128,6 +128,7 @@ def run(request: PageMemoryInput) -> tuple[str, pd.DataFrame]:
         }
 
         if verdict == "whole_doc":
+            anatomy = getattr(profile, "anatomy", None)
             parsed_df = _build_whole_doc_dataframe(
                 filename=request.filename,
                 page_count=page_count,
@@ -141,6 +142,7 @@ def run(request: PageMemoryInput) -> tuple[str, pd.DataFrame]:
                 output_dir=full_output_dir,
                 page_memory_config=page_memory_config,
                 vlm_model=os.environ.get("IMAGE_MODEL"),
+                page_features=anatomy.page_features if anatomy else None,
             )
         elif is_progressive:
             page_texts = coerce_page_text_cache(
@@ -1033,6 +1035,7 @@ def _run_whole_doc_fine_stage(
     output_dir: str,
     page_memory_config: PageMemoryConfig,
     vlm_model: str | None,
+    page_features: list[Any] | None = None,
 ) -> tuple[dict[int, str], dict[int, list[Any]], dict[str, Any]]:
     """Run render → fine text → formula verify for a whole-doc document.
 
@@ -1058,6 +1061,10 @@ def _run_whole_doc_fine_stage(
             output_dir=output_dir,
             scope_id="whole_doc",
             pages=pages,
+            # PageRenderResult width/height come from page_features; without
+            # them every size is 0 and MinerU bboxes degrade to None (judge
+            # then compares against the full page instead of a tight crop).
+            page_features=page_features,
         )
     with stage_timer("page_memory.fine_text", page_count=len(pages)):
         fine_result = extract_fine_page_details(
@@ -1097,6 +1104,7 @@ def _build_whole_doc_dataframe(
     output_dir: str | None = None,
     page_memory_config: PageMemoryConfig | None = None,
     vlm_model: str | None = None,
+    page_features: list[Any] | None = None,
 ) -> pd.DataFrame:
     pages = list(range(1, page_count + 1)) if page_count > 0 else [1]
     texts = coerce_page_text_cache(page_texts)
@@ -1110,6 +1118,7 @@ def _build_whole_doc_dataframe(
             output_dir=output_dir,
             page_memory_config=page_memory_config,
             vlm_model=vlm_model,
+            page_features=page_features,
         )
         # Fine text (MinerU/VLM, with corrected latex spliced in) replaces the
         # raw extractor text page by page; pages without fine text keep raw.
