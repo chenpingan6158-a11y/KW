@@ -236,8 +236,61 @@ def extract_section_skeletons(
             ),
         )
 
+    _extend_last_chapter_to_trailing_pages(
+        skeletons,
+        filename=filename,
+        page_count=page_count,
+        body_pages=body_pages,
+    )
+
     _log_unlocated_title_warnings(filename=filename, skeletons=skeletons)
     return skeletons
+
+
+def _extend_last_chapter_to_trailing_pages(
+    skeletons: list[SectionSkeleton],
+    *,
+    filename: str,
+    page_count: int,
+    body_pages: list[int],
+) -> None:
+    """Let the last TOC chapter own pages after the TOC's last listed entry.
+
+    TOC-anchored skeletons stop at the last page number the TOC lists, so
+    trailing pages that simply have no TOC entry (appendices, references,
+    continuation content) used to fall out of every scope — their content
+    became unreachable in the built corpus. Extend the final chapter
+    skeleton to the last body page instead of dropping those pages.
+    """
+    if not skeletons or page_count <= 0:
+        return
+    if all(is_fallback_root(item) for item in skeletons):
+        return  # fallback root already covers 1..page_count
+    target = max(body_pages) if body_pages else page_count
+    chapters = [
+        item
+        for item in skeletons
+        if not is_document_prefix(item)
+        and not is_toc_node(item)
+        and not is_fallback_root(item)
+    ]
+    if not chapters:
+        return
+    last = max(chapters, key=lambda item: (item.end_page, item.start_page))
+    if last.end_page < target:
+        merged = SectionSkeleton(
+            section_path=last.section_path,
+            level=last.level,
+            start_page=last.start_page,
+            end_page=target,
+            title=last.title,
+            parent_path=last.parent_path,
+            evidence={
+                **(last.evidence or {}),
+                "trailing_pages_absorbed": target - last.end_page,
+            },
+        )
+        skeletons[skeletons.index(last)] = merged
 
 
 def _range_to_skeleton(
