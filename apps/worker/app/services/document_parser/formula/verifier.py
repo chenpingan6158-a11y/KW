@@ -227,12 +227,65 @@ def _judge_once(
         response_format={"type": "json_object"},
         usage_task=usage_task,
     )
-    data = json.loads(raw_response)
+    data = _loads_lenient(raw_response)
     return (
         bool(data.get("match")),
         str(data.get("corrected_latex") or ""),
         str(data.get("reason") or ""),
     )
+
+
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+_KNOWN_JSON_ESCAPES = frozenset('"\\/bfnrtu')
+
+
+def _loads_lenient(raw: str) -> dict[str, Any]:
+    """``json.loads`` with a repair pass for raw LaTeX backslashes.
+
+    Judge replies embed LaTeX in strict JSON. Models frequently emit raw
+    backslashes in two damaging shapes: invalid escapes (``\\sum`` → ``\\s``)
+    crash the parse, and worse, ``\\frac``/``\\tag`` parse "successfully" as
+    formfeed/tab and silently corrupt the correction. So any response that
+    contains a backslash goes through the repair first (re-escaping
+    backslashes that introduce LaTeX commands); the plain parse remains the
+    fallback for responses without backslashes or when repair cannot fix it.
+    """
+    if "\\" in raw:
+        try:
+            return json.loads(_escape_raw_latex_backslashes(raw))
+        except json.JSONDecodeError:
+            pass
+    return json.loads(raw)
+
+
+def _escape_raw_latex_backslashes(text: str) -> str:
+    out: list[str] = []
+    index = 0
+    length = len(text)
+    while index < length:
+        char = text[index]
+        if char != "\\":
+            out.append(char)
+            index += 1
+            continue
+        nxt = text[index + 1] if index + 1 < length else ""
+        if nxt == "\\":  # already-escaped backslash pair: keep verbatim
+            out.append("\\\\")
+            index += 2
+            continue
+        if nxt == "u" and index + 5 < length and all(
+            c in _HEX_DIGITS for c in text[index + 2 : index + 6]
+        ):  # genuine \uXXXX escape
+            out.append(text[index : index + 6])
+            index += 6
+            continue
+        if nxt.isalpha():  # raw LaTeX command: escape the backslash
+            out.append("\\\\")
+            index += 1
+            continue
+        out.append(char)  # structural escape (\" \n \t …): keep as-is
+        index += 1
+    return "".join(out)
 
 
 def _data_url(image_path: str) -> str:

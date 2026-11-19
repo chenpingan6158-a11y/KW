@@ -191,3 +191,35 @@ def test_missing_source_image_stays_unverified(monkeypatch, tmp_path) -> None:
     )
 
     assert result[0].status == "unverified"
+
+
+def test_loads_lenient_repairs_raw_latex_backslashes() -> None:
+    from app.services.document_parser.formula.verifier import _loads_lenient
+
+    # Invalid escape (backslash-s in \sum) would crash plain json.loads.
+    raw = '{"match": false, "corrected_latex": "\\sum_{k=1}^n k^2", "reason": "ok"}'
+    data = _loads_lenient(raw)
+    assert data["corrected_latex"] == "\\sum_{k=1}^n k^2"
+
+    # Valid-but-corrupting escape: \frac's \f would parse as formfeed.
+    raw = '{"match": true, "corrected_latex": null, "reason": "needs \\frac a b"}'
+    data = _loads_lenient(raw)
+    assert data["reason"] == "needs \\frac a b"
+
+    # \tag's \t would parse as a tab and silently corrupt the latex.
+    raw = '{"match": false, "corrected_latex": "x=1\\tag{2.b}", "reason": "r"}'
+    data = _loads_lenient(raw)
+    assert data["corrected_latex"] == "x=1\\tag{2.b}"
+
+
+def test_loads_lenient_keeps_valid_json_verbatim() -> None:
+    from app.services.document_parser.formula.verifier import _loads_lenient
+
+    # Already-escaped LaTeX (JSON double-backslash frac) stays single.
+    raw = '{"match": false, "corrected_latex": "\\\\frac{1}{2}", "reason": "x"}'
+    assert _loads_lenient(raw)["corrected_latex"] == "\\frac{1}{2}"
+
+    # Structural escapes and genuine \uXXXX pass through untouched.
+    raw = '{"match": true, "corrected_latex": null, "reason": "line1\\nline2 \\u4f60"}'
+    # repair keeps JSON newline escapes literal; unicode escapes still decode
+    assert _loads_lenient(raw)["reason"] == "line1\\nline2 \u4f60"
