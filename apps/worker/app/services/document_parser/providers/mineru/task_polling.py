@@ -221,7 +221,10 @@ def poll_mineru_task(
             polling_logger.bind(
                 attempt=attempt + 1,
                 error_message=str(exc),
-            ).warning("MinerU polling network request failed")
+            ).warning(
+                "MinerU polling network request failed"
+                f" [url={status_url} type={type(exc).__name__}: {exc}]"
+            )
             time.sleep(polling_interval * 2)
             attempt += 1
         except KnowhereException:
