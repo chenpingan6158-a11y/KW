@@ -267,12 +267,16 @@ def _extend_last_chapter_to_trailing_pages(
     if all(is_fallback_root(item) for item in skeletons):
         return  # fallback root already covers 1..page_count
     target = max(body_pages) if body_pages else page_count
+    # NOTE: is_toc_node() is unusable here — evidence["source"] collides
+    # with the title-match source, which is also "toc_node" for perfectly
+    # ordinary chapters. Structural check instead: TOC-ownership nodes are
+    # the ones whose section path ends in "/TOC".
     chapters = [
         item
         for item in skeletons
         if not is_document_prefix(item)
-        and not is_toc_node(item)
         and not is_fallback_root(item)
+        and not split_escaped_document_path(item.section_path)[-1] == "TOC"
     ]
     if not chapters:
         return
