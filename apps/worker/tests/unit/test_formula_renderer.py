@@ -38,3 +38,30 @@ def test_row_separator_backslashes_render_like_newlines(tmp_path):
     )
     out = render_formula_png(latex, str(tmp_path / "cases.png"))
     assert (tmp_path / "cases.png").exists() and out
+
+
+def test_mineru_array_wrapper_renders(tmp_path):
+    """MinerU wraps multi-line formulas in \\begin{array}{r}; strip and render."""
+    latex = (
+        "\\begin{array} { r } { \\omega _ { 0 } = 2 \\pi f _ { 0 } , "
+        "\\qquad \\varphi _ { V } ( f ) = \\varphi _ { u } ( f ) "
+        "+ \\frac { \\pi } { 2 } } \\end{array}\\tag{2.c}"
+    )
+    out = render_formula_png(latex, str(tmp_path / "array.png"))
+    assert (tmp_path / "array.png").stat().st_size > 0 and out
+
+
+def test_starred_spaced_operatorname_maps_to_builtin(tmp_path):
+    """\\operatorname* { l i m } (spaced, starred) becomes \\lim."""
+    latex = (
+        "\\operatorname* { l i m } _ { n \\to \\infty } "
+        "( 1 + { \\frac { 1 } { n } } ) ^ { n } = e\\tag{5.a}"
+    )
+    out = render_formula_png(latex, str(tmp_path / "lim.png"))
+    assert (tmp_path / "lim.png").stat().st_size > 0 and out
+
+
+def test_unknown_operatorname_falls_back_to_mathrm(tmp_path):
+    latex = r"\operatorname{tr}(A) = 3"
+    out = render_formula_png(latex, str(tmp_path / "tr.png"))
+    assert (tmp_path / "tr.png").stat().st_size > 0 and out

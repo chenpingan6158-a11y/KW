@@ -10,6 +10,22 @@ _STRIP_CMDS_RE = re.compile(r"\\(?:displaystyle|label|tag)\s*(?:\{[^{}]*\})?")
 # mathtext separates rows by newlines inside cases/array environments, while
 # LLM output uses the standard LaTeX ``\\`` row separator.
 _ROW_SEP_RE = re.compile(r"\\\\\s*")
+# MinerU emits \operatorname* { l i m } (spaced letters, starred); mathtext
+# has neither \operatorname nor the star. Map known operator names to their
+# built-in commands, everything else to \mathrm.
+_OPNAME_RE = re.compile(r"\\operatorname\*?\s*\{\s*([^{}]*?)\s*\}")
+_KNOWN_OPS = frozenset(
+    {
+        "lim", "max", "min", "inf", "sup", "sin", "cos", "tan", "cot",
+        "sec", "csc", "ln", "log", "exp", "det", "dim", "deg", "gcd",
+        "arg", "arctan", "arcsin", "arccos", "Re", "Im",
+    }
+)
+# mathtext has no array environment; MinerU wraps multi-line formulas in
+# \begin{array}{r}...\end{array}. Strip the wrapper, keep the rows (the
+# row-separator pass turns \\ into newlines, matching how cases renders).
+_ARRAY_BEGIN_RE = re.compile(r"\\begin\s*\{\s*array\s*\}\s*\{[^{}]*\}")
+_ARRAY_END_RE = re.compile(r"\\end\s*\{\s*array\s*\}")
 
 
 def render_formula_png(latex: str, output_path: str, *, dpi: int = 200) -> str:
@@ -53,5 +69,15 @@ def _sanitize(latex: str) -> str:
     expression = latex.strip().strip("$").strip()
     expression = _TEXT_CMD_RE.sub(r"\\mathrm{", expression)
     expression = _STRIP_CMDS_RE.sub("", expression)
+    expression = _OPNAME_RE.sub(_normalize_opname, expression)
+    expression = _ARRAY_BEGIN_RE.sub("", expression)
+    expression = _ARRAY_END_RE.sub("", expression)
     expression = _ROW_SEP_RE.sub("\n", expression)
     return expression
+
+
+def _normalize_opname(match: re.Match[str]) -> str:
+    name = "".join(match.group(1).split())
+    if name in _KNOWN_OPS:
+        return "\\" + name
+    return "\\mathrm{" + name + "}"
