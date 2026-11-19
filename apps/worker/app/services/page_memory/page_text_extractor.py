@@ -26,6 +26,10 @@ from loguru import logger
 
 from app.services.document_agent.tools.ocr_pages import ocr_rendered_pages
 from app.services.document_parser.formula.extractor import extract_latex_formulas
+from app.services.document_parser.formula.redelimit import (
+    looks_mathematical,
+    redelimit_transcription,
+)
 from app.services.document_parser.formula.models import FormulaRecord
 from shared.services.ai.summary.engine import transcribe
 
@@ -232,8 +236,23 @@ def _extract_via_vlm(
             failed_pages.append(int(job_page))
             continue
         if text:
-            extracted[int(job_page)] = text
             page_formulas = extract_latex_formulas(text, page_num=int(job_page))
+            if not page_formulas and looks_mathematical(text):
+                # VLM transcriptions do not reliably follow the $..$
+                # delimiter instruction (same flakiness as the image
+                # parser); one cheap text rewrite restores them.
+                rewritten = redelimit_transcription(
+                    text,
+                    usage_task="page_memory.formula_redelimit",
+                )
+                if rewritten:
+                    re_extracted = extract_latex_formulas(
+                        rewritten, page_num=int(job_page)
+                    )
+                    if re_extracted:
+                        text = rewritten
+                        page_formulas = re_extracted
+            extracted[int(job_page)] = text
             if page_formulas:
                 formulas[int(job_page)] = [
                     FormulaRecord(latex=item.latex, page_num=int(job_page))
@@ -285,8 +304,15 @@ def _extract_via_mineru(
             os.path.basename(live.pdf_path) or "scope.pdf",
             work_dir,
         )
+        layout_path = os.path.join(work_dir, "layout.json")
+        try:  # diagnostic keep-copy until page-coverage/bbox gaps are settled
+            import shutil as _shutil
+
+            _shutil.copyfile(layout_path, "/tmp/mineru_last_layout.json")
+        except OSError:
+            pass
         return _page_text_from_layout(
-            os.path.join(work_dir, "layout.json"),
+            layout_path,
             live.page_numbers,
             page_size_pt_by_page=page_size_pt_by_page,
         )
@@ -330,6 +356,13 @@ def _page_text_from_layout(
             extracted[real_page] = joined
         if page_formulas:
             formulas[real_page] = page_formulas
+        logger.info(
+            "[fine_mineru] page {} -> text={} formulas={} size_pt={}",
+            real_page,
+            bool(joined),
+            len(page_formulas),
+            size_pt is not None,
+        )
     return FinePageText(text_by_page=extracted, formulas_by_page=formulas)
 
 

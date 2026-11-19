@@ -561,6 +561,9 @@ def build_node_rows(
             ]
             if node_formulas:
                 row["extra_metadata"]["formulas"] = node_formulas
+            # Same extraction trace as the whole_doc / image paths: a zero
+            # count stays distinguishable from "the formula path never ran".
+            row["extra_metadata"]["formula_scan"] = {"found": len(node_formulas)}
             rows.append(row)
             rows_by_path[leaf.section_path] = row
 
