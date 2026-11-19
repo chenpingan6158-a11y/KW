@@ -75,3 +75,13 @@ class MineruConfig(BaseModel):
             "interline_equation blocks in layout.json)."
         ),
     )
+    MINERU_RESULT_PROXY: str = Field(
+        default="",
+        description=(
+            "Forward proxy (http://host:port) for MinerU result-zip downloads. "
+            "The result CDN resets both OpenSSL ClientHellos and container "
+            "(vpnkit) TCP paths; downloads use a browser TLS fingerprint and, "
+            "when set, egress through this host-side proxy to survive both "
+            "filters. Empty = direct download."
+        ),
+    )

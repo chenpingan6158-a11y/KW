@@ -145,14 +145,24 @@ def poll_mineru_task(
                     last_state = state
 
                 if state == "done":
+                    result_proxy = str(
+                        getattr(settings, "MINERU_RESULT_PROXY", "") or ""
+                    ).strip()
                     download_and_extract_zip(
                         status["full_zip_url"],
                         dest_dir=output_dir,
                         keep_exts=(".json",),
                         exclude_patterns=("content_list", "middle.json", "model.json"),
                         # The result CDN resets OpenSSL ClientHellos while
-                        # accepting browser fingerprints (2026-11-19).
+                        # accepting browser fingerprints (2026-11-19), and
+                        # additionally resets container (vpnkit) TCP paths —
+                        # egress via the host-side proxy when configured.
                         impersonate="chrome",
+                        proxies=(
+                            {"http": result_proxy, "https": result_proxy}
+                            if result_proxy
+                            else None
+                        ),
                     )
                     polling_logger.bind(token_id=lease.token_id).info(
                         "MinerU parsing completed"

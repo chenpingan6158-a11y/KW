@@ -21,6 +21,7 @@ def download_and_extract_zip(
     exclude_patterns: tuple[str, ...] = (),
     clean_empty_dirs: bool = True,
     impersonate: str | None = None,
+    proxies: Mapping[str, str] | None = None,
 ) -> None:
     """Download a ZIP file, extract it, and keep only the requested artifacts.
 
@@ -28,6 +29,10 @@ def download_and_extract_zip(
     fingerprint (e.g. ``"chrome"``). Some CDN edges reset OpenSSL ClientHellos
     while accepting browser ones (observed 2026-11-19 on
     cdn-mineru.openxlab.org.cn); MinerU result downloads pass ``"chrome"``.
+
+    ``proxies`` (impersonate mode only) tunnels the download through a
+    forward proxy — used to egress from the host network stack when the
+    container's own TCP path is reset by the same filtering.
     """
     import fnmatch
 
@@ -53,6 +58,7 @@ def download_and_extract_zip(
             allow_redirects=True,
             impersonate=impersonate,
             stream=True,
+            proxies=dict(proxies) if proxies else None,
         )
     else:
         response = requests.get(
