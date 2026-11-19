@@ -248,8 +248,23 @@ def _normalize_formulas(value: Any) -> list[dict[str, Any]]:
             formula["page_num"] = page_num
         if (original := str(item.get("original_latex") or "").strip()):
             formula["original_latex"] = original
+        if (bbox := _normalize_formula_bbox(item.get("bbox"))) is not None:
+            formula["bbox"] = bbox
         formulas.append(formula)
     return formulas
+
+
+def _normalize_formula_bbox(value: Any) -> list[int] | None:
+    """Validate a MinerU formula bbox as 4 non-negative ints (px, dpi-144)."""
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        return None
+    try:
+        coords = [int(round(float(item))) for item in value]
+    except (TypeError, ValueError):
+        return None
+    if any(coord < 0 for coord in coords) or coords[0] >= coords[2] or coords[1] >= coords[3]:
+        return None
+    return coords
 
 
 def _normalize_formula_scan(value: Any) -> dict[str, Any] | None:

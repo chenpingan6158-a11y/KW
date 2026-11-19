@@ -99,9 +99,28 @@ def test_zip_chunks_keep_valid_formulas_and_drop_malformed() -> None:
     chunks = _chunks_with_two_embeds_of_one_image()
     body = next(chunk for chunk in chunks if chunk["chunk_id"] == "body-1")
     body["metadata"]["formulas"] = [
-        {"latex": "E=mc^2", "status": "verified", "verified": True, "page_num": 3},
+        {
+            "latex": "E=mc^2",
+            "status": "verified",
+            "verified": True,
+            "page_num": 3,
+            "bbox": [10, 20, 300, 80],  # MinerU provenance, kept
+        },
         {"latex": "", "status": "verified"},  # dropped: empty latex
         {"latex": "x", "status": "bogus"},  # dropped: unknown status
+        {
+            # kept, but the malformed bbox (3 coords) is stripped — a bad
+            # bbox must not discard an otherwise valid formula.
+            "latex": "y",
+            "status": "verified",
+            "bbox": [10, 20, 300],
+        },
+        {
+            # kept, inverted bbox stripped.
+            "latex": "z",
+            "status": "verified",
+            "bbox": [30, 20, 10, 5],
+        },
         "not-a-dict",  # dropped: not a dict
     ]
     image = next(chunk for chunk in chunks if chunk["chunk_id"] == "img-1")
@@ -122,7 +141,15 @@ def test_zip_chunks_keep_valid_formulas_and_drop_malformed() -> None:
 
     zip_body = next(chunk for chunk in formatted if chunk["chunk_id"] == "body-1")
     assert zip_body["metadata"]["formulas"] == [
-        {"latex": "E=mc^2", "status": "verified", "verified": True, "page_num": 3}
+        {
+            "latex": "E=mc^2",
+            "status": "verified",
+            "verified": True,
+            "page_num": 3,
+            "bbox": [10, 20, 300, 80],
+        },
+        {"latex": "y", "status": "verified", "verified": False},
+        {"latex": "z", "status": "verified", "verified": False},
     ]
     zip_image = next(chunk for chunk in formatted if chunk["type"] == "image")
     assert zip_image["metadata"]["formulas"] == [

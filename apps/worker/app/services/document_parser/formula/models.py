@@ -25,7 +25,8 @@ class FormulaRecord:
     status: str = "unverified"
     page_num: int | None = None
     original_latex: str | None = None
-    # Pipeline-internal crop box on the dpi-144 page render; never serialized.
+    # Crop box on the dpi-144 page render (MinerU layout.json, pt→px); rides
+    # metadata as "bbox" so the record stays re-verifiable and UI-anchorable.
     bbox_px: list[int] | None = None
 
     @property
@@ -42,4 +43,11 @@ class FormulaRecord:
             payload["page_num"] = self.page_num
         if self.original_latex is not None:
             payload["original_latex"] = self.original_latex
+        if self.bbox_px:
+            # MinerU-only provenance (layout.json pt→px on the dpi-144 render):
+            # anchors the formula on the page image and enables re-verification
+            # without re-parsing. VLM / image-parser records never set it.
+            payload["bbox"] = [
+                int(round(value)) for value in self.bbox_px[:4]
+            ]
         return payload
