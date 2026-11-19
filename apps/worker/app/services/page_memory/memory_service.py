@@ -137,6 +137,10 @@ def run(request: PageMemoryInput) -> tuple[str, pd.DataFrame]:
                     getattr(profile, "page_full_text_cache", None)
                 ),
                 body_text_by_page=getattr(profile, "page_body_text_cache", None),
+                pdf_path=pdf_path,
+                output_dir=full_output_dir,
+                page_memory_config=page_memory_config,
+                vlm_model=os.environ.get("IMAGE_MODEL"),
             )
         elif is_progressive:
             page_texts = coerce_page_text_cache(
@@ -1021,6 +1025,66 @@ def _select_rendered_pages_with_assets(
 # ── whole_doc builder (PR3, unchanged) ────────────────────────────────
 
 
+def _run_whole_doc_fine_stage(
+    *,
+    pdf_path: str,
+    page_count: int,
+    pages: list[int],
+    output_dir: str,
+    page_memory_config: PageMemoryConfig,
+    vlm_model: str | None,
+) -> tuple[dict[int, str], dict[int, list[Any]], dict[str, Any]]:
+    """Run render → fine text → formula verify for a whole-doc document.
+
+    The whole_doc shortcut used to publish the profiler's raw page text
+    directly, which skipped the fine extractor (MinerU / VLM) and with it
+    the whole formula LaTeX channel — small no-TOC PDFs could never get
+    formulas. Treat the document as one scope so the same stages run.
+    """
+    from app.services.page_memory.page_renderer import render_document_pages
+    from app.services.page_memory.page_text_extractor import (
+        extract_fine_page_details,
+    )
+
+    scan: dict[str, Any] = {"found": 0}
+    extractor = (page_memory_config.fine_text_extractor or "none").strip().lower()
+    if extractor == "none" or not pages:
+        return {}, {}, scan
+
+    with stage_timer("page_memory.render", page_count=len(pages)):
+        rendered = render_document_pages(
+            pdf_path=pdf_path,
+            page_count=page_count,
+            output_dir=output_dir,
+            scope_id="whole_doc",
+            pages=pages,
+        )
+    with stage_timer("page_memory.fine_text", page_count=len(pages)):
+        fine_result = extract_fine_page_details(
+            pdf_path=pdf_path,
+            rendered=rendered,
+            final_pages=pages,
+            extractor=extractor,
+            vlm_model=vlm_model,
+            output_dir=os.path.join(output_dir, "_fine_text", "whole_doc"),
+            concurrency=page_memory_config.fine_text_extraction_concurrency,
+        )
+    formulas_by_page = _verify_scope_formulas(
+        dict(fine_result.formulas_by_page),
+        rendered=rendered,
+        output_dir=output_dir,
+        scope_id="whole_doc",
+        vlm_model=vlm_model,
+        concurrency=page_memory_config.formula_verify_concurrency,
+    )
+    fine_text_by_page = _apply_formula_corrections(
+        dict(fine_result.text_by_page),
+        formulas_by_page,
+    )
+    scan["found"] = sum(len(items) for items in formulas_by_page.values())
+    return fine_text_by_page, formulas_by_page, scan
+
+
 def _build_whole_doc_dataframe(
     *,
     filename: str,
@@ -1029,13 +1093,48 @@ def _build_whole_doc_dataframe(
     trace_recorder: Any | None = None,
     page_texts: dict[int, str] | None = None,
     body_text_by_page: dict[int, str] | None = None,
+    pdf_path: str | None = None,
+    output_dir: str | None = None,
+    page_memory_config: PageMemoryConfig | None = None,
+    vlm_model: str | None = None,
 ) -> pd.DataFrame:
     pages = list(range(1, page_count + 1)) if page_count > 0 else [1]
     texts = coerce_page_text_cache(page_texts)
+    formulas_by_page: dict[int, list[Any]] = {}
+    formula_scan: dict[str, Any] = {}
+    if pdf_path and output_dir and page_memory_config is not None:
+        fine_text_by_page, formulas_by_page, formula_scan = _run_whole_doc_fine_stage(
+            pdf_path=pdf_path,
+            page_count=page_count,
+            pages=pages,
+            output_dir=output_dir,
+            page_memory_config=page_memory_config,
+            vlm_model=vlm_model,
+        )
+        # Fine text (MinerU/VLM, with corrected latex spliced in) replaces the
+        # raw extractor text page by page; pages without fine text keep raw.
+        texts = {
+            page: fine_text_by_page.get(page) or texts.get(page, "")
+            for page in pages
+        }
     raw_text = "\n\n".join(texts.get(page, "") for page in pages).strip()
     summary = _build_summary(filename=filename, page_count=page_count, raw_text=raw_text)
     content = f"[SUMMARY]\n{summary}\n\n[RAW]\n{raw_text}".strip()
     know_id = gen_str_codes(f"wholedoc::{filename}::{content}")
+    extra_metadata: dict[str, Any] = {
+        "body_text_preview": build_body_text_preview(
+            (body_text_by_page or {}).get(page, "") for page in pages
+        ),
+    }
+    formula_records = [
+        record for items in formulas_by_page.values() for record in items
+    ]
+    if formula_records:
+        extra_metadata["formulas"] = [
+            record.to_metadata() for record in formula_records
+        ]
+    if formula_scan:
+        extra_metadata["formula_scan"] = formula_scan
     row = {
         "content": content,
         "path": f"{filename}/Root",
@@ -1048,17 +1147,17 @@ def _build_whole_doc_dataframe(
         "connectto": "",
         "addtime": get_str_time(),
         "page_nums": ",".join(str(page) for page in pages),
-        "extra_metadata": {
-            "body_text_preview": build_body_text_preview(
-                (body_text_by_page or {}).get(page, "") for page in pages
-            ),
-        },
+        "extra_metadata": extra_metadata,
     }
     _record_trace_stage(
         trace_recorder,
         "whole_doc",
         page_info=page_scope_info(pages),
-        variables={"summary": summary, "verdict": verdict},
+        variables={
+            "summary": summary,
+            "verdict": verdict,
+            "formula_count": len(formula_records),
+        },
     )
     return pd.DataFrame([row], columns=pd.Index(PARSER_DF_COLUMNS))
 
