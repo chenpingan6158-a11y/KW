@@ -304,15 +304,8 @@ def _extract_via_mineru(
             os.path.basename(live.pdf_path) or "scope.pdf",
             work_dir,
         )
-        layout_path = os.path.join(work_dir, "layout.json")
-        try:  # diagnostic keep-copy until page-coverage/bbox gaps are settled
-            import shutil as _shutil
-
-            _shutil.copyfile(layout_path, "/tmp/mineru_last_layout.json")
-        except OSError:
-            pass
         return _page_text_from_layout(
-            layout_path,
+            os.path.join(work_dir, "layout.json"),
             live.page_numbers,
             page_size_pt_by_page=page_size_pt_by_page,
         )
